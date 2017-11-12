@@ -1,0 +1,11 @@
+1. http://www.pyimagesearch.com/2016/10/24/ubuntu-16-04-how-to-install-opencv/
+2. http://www.pyimagesearch.com/2015/08/17/the-perfect-computer-vision-environment-pycharm-opencv-and-python-virtual-environments/
+3. apt-get install python3-tk
+4. apt-get install guvcview
+install git, moviepy
+install cuda
+install cudnn
+install tensorflow with cuda
+install keras with tensorflow
+install jupyter
+https://www.youtube.com/watch?v=COlbP62-B-U
