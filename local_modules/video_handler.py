@@ -20,38 +20,21 @@ class VideoHandler():
         self.video_link= os.path.join(folder,self.video_meta['filename'])
         self.cap = cv2.VideoCapture(self.video_link)
 
-        self.src = np.array(self.video_meta['rectangle_image'], dtype=np.float32)
-
-        self.dst = np.array(self.video_meta['rectangle_tracking'], dtype=np.float32)
-
         # compute the perspective transform matrix
+        self.src = np.array(self.video_meta['rectangle_image'], dtype=np.float32)
+        self.dst = np.array(self.video_meta['rectangle_tracking'], dtype=np.float32)
+        self.xy_plane_size = self.video_meta['xy_plane_size']
         self.M = cv2.getPerspectiveTransform(self.src, self.dst)
-
-        # calculate t such that p'' = (t*p'1,t*p'2) falls on dst with p' = M*p
-        #s = np.argmax(np.sum(self.dst,axis = 1))
-        #p = np.matmul(self.M, np.append(self.src[s], np.array([1])))
-        #self.t = self.dst[s][1] / p[1]
-
-
-        # determine the xy_plane size, ie the size of the projection of tracking zone on xy
-        #tr = np.array([[self.video_meta['tracking_zone'][2], self.video_meta['tracking_zone'][0], 1.],
-        #               [self.video_meta['tracking_zone'][2], self.video_meta['tracking_zone'][1], 1.],
-        #               [self.video_meta['tracking_zone'][3], self.video_meta['tracking_zone'][0], 1.],
-        #               [self.video_meta['tracking_zone'][3], self.video_meta['tracking_zone'][1], 1.],
-        #               ])
-        #tr_p = np.matmul(self.M, tr.T) * self.t
-        #tr_p = tr_p[0:2,:]
-        #self.x_min, self.y_min = np.min(tr_p, axis=1)
-        #self.x_max, self.y_max = np.max(tr_p, axis=1)
-        #self.xy_plane_shape = (self.x_max-self.x_min, self.y_max-self.y_min)
-        #self.xy_plane_shape = tuple([int(x) for x in self.xy_plane_shape])
-
 
         # we calculate the transformation matrix for
         # projecting the points on the road
         prj_src = np.array(self.video_meta['floor_proj_src'], dtype=np.float32)
         prj_dst = np.array(self.video_meta['floor_proj_dst'], dtype=np.float32)
         self.P = cv2.getAffineTransform(prj_src, prj_dst)
+
+    def get_birds_eye_view(self):
+        frame_as_bird = cv2.warpPerspective(self.frame, self.M, self.xy_plane_size)
+        return frame_as_bird
 
     def get_next(self,hist_eq = False):
         self.ret, self.frame = self.cap.read()
@@ -71,19 +54,19 @@ class VideoHandler():
         if hist_eq:
             return self.frame_hist_eq[
                                     self.video_meta['detection_zone'][0]:self.video_meta['detection_zone'][1],
-                                    self.video_meta['detection_zone'][2]:self.video_meta['detection_zone'][3]]
+                                    self.video_meta['detection_zone'][2]:self.video_meta['detection_zone'][3]].copy()
         else:
             return self.frame[self.video_meta['detection_zone'][0]:self.video_meta['detection_zone'][1],
-                                    self.video_meta['detection_zone'][2]:self.video_meta['detection_zone'][3]]
+                                    self.video_meta['detection_zone'][2]:self.video_meta['detection_zone'][3]].copy()
 
     def get_current_tracking_zone(self, hist_eq = False):
         if hist_eq:
             return self.frame_hist_eq[
                                     self.video_meta['tracking_zone'][0]:self.video_meta['tracking_zone'][1],
-                                    self.video_meta['tracking_zone'][2]:self.video_meta['tracking_zone'][3]]
+                                    self.video_meta['tracking_zone'][2]:self.video_meta['tracking_zone'][3]].copy()
         else:
             return self.frame[self.video_meta['tracking_zone'][0]:self.video_meta['tracking_zone'][1],
-                                    self.video_meta['tracking_zone'][2]:self.video_meta['tracking_zone'][3]]
+                                    self.video_meta['tracking_zone'][2]:self.video_meta['tracking_zone'][3]].copy()
 
     def mv_detection_to_tracking(self, blobs):
         tz = np.array(self.video_meta['tracking_zone'])
@@ -106,9 +89,9 @@ class VideoHandler():
     def project_detection_to_xy_plane(self,blobs):
         blobs_xy = self.mv_detection_to_input(blobs)
         blobs_xy = self.project_on_road(blobs_xy)
-
-        blobs_xy = cv2.perspectiveTransform(blobs_xy.astype(np.float64).reshape(1, -1, 2), self.M)
-        blobs_xy = np.squeeze(blobs_xy)
+        if len(blobs_xy.shape) > 0:
+            blobs_xy = cv2.perspectiveTransform(blobs_xy.astype(np.float64).reshape(1, -1, 2), self.M)
+            blobs_xy = np.squeeze(blobs_xy).reshape(-1,2)
 
         return blobs_xy
 

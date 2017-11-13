@@ -38,7 +38,7 @@ label_map = label_map_util.load_labelmap(PATH_TO_LABELS)
 categories = label_map_util.convert_label_map_to_categories(label_map, max_num_classes=NUM_CLASSES, use_display_name=True)
 category_index = label_map_util.create_category_index(categories)
 
-n_sec = 10
+n_sec = 20
 n_fps = 30
 n_array = n_sec*n_fps
 plt_thrshld = 0.3

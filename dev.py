@@ -128,9 +128,9 @@
     # cap.release()
 
 
-import numpy as np
-import os
-import cv2
+#import numpy as np
+#import os
+#import cv2
 #import tensorflow as tf
 
 
@@ -234,22 +234,30 @@ import cv2
 # cv2.imshow('object detection',image)
 # if cv2.waitKey(25000) & 0xFF == ord('q'):
 #     cv2.destroyAllWindows()
-import numpy as np
-import os
-import cv2
-#import tensorflow as tf
-#from cycl_detection import tf_detector
-from local_modules import video_handler
+# ret, whole_frame = vh.get_next()
+# tracking_frame = vh.get_current_tracking_zone().copy()
+# detection_frame = vh.get_current_detection_zone().copy()
+# xy_bird_frame = cv2.warpPerspective(whole_frame, vh.M,(1750,3000))
 
+# import numpy as np
+# import os
+# import cv2
+# import tensorflow as tf
+# from matplotlib import pyplot as plt
+#
+#
+# from cycl_detection import tf_detector
+# from local_modules import video_handler
+#
 # PATH_TO_PROCESS_DIR = r'/mnt/427149F311EAC541/MEGA/bike_cam/tf_learning_data/'
 # PATH_TO_CKPT = os.path.join(PATH_TO_PROCESS_DIR, 'ssdv1/frozen_inference_graph.pb')
 # PATH_TO_LABELS = r"/mnt/427149F311EAC541/pipeline/label_map.pbtxt"
 #
-#
-#
-# #tfd = tf_detector.TFDetector(PATH_TO_CKPT,PATH_TO_LABELS,1)
+# tfd = tf_detector.TFDetector(PATH_TO_CKPT,PATH_TO_LABELS,1)
 # vh = video_handler.VideoHandler('tres_ciclistas')
-
+#
+# pass
+#
 # while True:
 #     # we go to the next frame
 #     ret = vh.next()
@@ -263,6 +271,134 @@ from local_modules import video_handler
 #     tfd.update_history()
 #
 # all_blobs = tfd.get_all_blobs()
+# all_keep = tfd.all_keep
+# all_boxes = tfd.all_boxes
+# all_mids = tfd.all_mids
+# #
+# import pickle
+# pickle.dump( all_keep, open( "/mnt/427149F311EAC541/MEGA/bike_cam/data/test/all_keep.p", "wb" ) )
+# pickle.dump( all_boxes, open( "/mnt/427149F311EAC541/MEGA/bike_cam/data/test/all_boxes.p", "wb" ) )
+# pickle.dump( all_mids, open( "/mnt/427149F311EAC541/MEGA/bike_cam/data/test/all_mids.p", "wb" ) )
+# pickle.dump( all_blobs, open( "/mnt/427149F311EAC541/MEGA/bike_cam/data/test/all_blobs.p", "wb" ) )
+
+import numpy as np
+import os
+import cv2
+import tensorflow as tf
+from matplotlib import pyplot as plt
+from kalman_filter_multi_object_tracking.tracker import Tracker
+from cycl_detection import tf_detector
+from local_modules import video_handler
+
+PATH_TO_PROCESS_DIR = r'/mnt/427149F311EAC541/MEGA/bike_cam/tf_learning_data/'
+PATH_TO_CKPT = os.path.join(PATH_TO_PROCESS_DIR, 'ssdv1/frozen_inference_graph.pb')
+PATH_TO_LABELS = r"/mnt/427149F311EAC541/pipeline/label_map.pbtxt"
+
+tfd = tf_detector.TFDetector(PATH_TO_CKPT,PATH_TO_LABELS,1)
+vh = video_handler.VideoHandler('tres_ciclistas')
+
+frame_counter = 0
+
+# Create Object Tracker
+tracker = Tracker(500, 60, 50, 100)
+
+# Variables initialization for KF
+skip_frame_count = 0
+track_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
+                (0, 255, 255), (255, 0, 255), (255, 127, 255),
+                (127, 0, 255), (127, 0, 127)]
+pause = False
+
+while True:
+    ret = vh.next()
+    frame_counter += 1
+    if not ret:
+        break
+
+    if frame_counter == 1:
+        xy_background = vh.get_birds_eye_view()
+        #plt.imshow(xy_background)
+        #plt.show()
+        detection_frame_size = vh.get_current_detection_zone().shape
+        resize_box = np.r_[detection_frame_size[1], detection_frame_size[0]]
+
+    # and pic the detection_zone
+    det_frame = vh.get_current_detection_zone(True)
+    # and put this into the detector
+    tfd.detect(det_frame)
+    # we update the history of detections in the Detector
+    tfd.update_history()
+
+    current_blobs = tfd.get_current_blobs()
+    current_blobs_xy = vh.project_detection_to_xy_plane(current_blobs)
+
+    xy_bird_frame = xy_background.copy()
+    frame = vh.get_current_tracking_zone()
+
+    if len(current_blobs_xy.shape)>0:
+        for i in range(current_blobs_xy.shape[0]):
+            xy_bird_frame = cv2.circle(xy_bird_frame, tuple(current_blobs_xy[i].astype(int)), 20, (255, 255, 255), -1)
+
+        # START vis block only
+        current_blobs_tracking = vh.mv_detection_to_tracking(current_blobs)
+        for i in range(current_blobs_tracking.shape[0]):
+            frame = cv2.circle(frame,tuple(current_blobs_tracking[i].astype(int)), 5, (0, 0, 255), -1)
+
+        # END vis block
+        # Track object using Kalman Filter
+        tracker.Update([current_blobs_xy[k].reshape(2,1) for k in range(current_blobs_xy.shape[0])])
+    else:
+        tracker.update_empty()
+
+    # For identified object tracks draw tracking line
+    # Use various colors to indicate different track_id
+    for i in range(len(tracker.tracks)):
+        if (len(tracker.tracks[i].trace) > 1):
+            for j in range(len(tracker.tracks[i].trace) - 1):
+                # Draw trace line
+                x1 = tracker.tracks[i].trace[j][0][0]
+                y1 = tracker.tracks[i].trace[j][1][0]
+                x2 = tracker.tracks[i].trace[j + 1][0][0]
+                y2 = tracker.tracks[i].trace[j + 1][1][0]
+                clr = tracker.tracks[i].track_id % 9
+                cv2.line(xy_bird_frame, (int(x1), int(y1)), (int(x2), int(y2)),
+                         track_colors[clr], 10)
+
+
+    xy_bird_frame = cv2.resize(xy_bird_frame, (0,0), fx=0.25, fy=0.25)
+
+    cv2.imshow('xy_bird_frame', xy_bird_frame)
+    cv2.imshow('tracking_frame', frame)
+
+
+    # Check for key strokes
+    k = cv2.waitKey(50) & 0xff
+
+    if k == 27:  # 'esc' key has been pressed, exit program.
+        break
+    if k == 112:  # 'p' has been pressed. this will pause/resume the code.
+        pause = not pause
+        if (pause is True):
+            print("Code is paused. Press 'p' to resume..")
+            while (pause is True):
+                # stay in this loop until
+                key = cv2.waitKey(30) & 0xff
+                if key == 112:
+                    pause = False
+                    print("Resume code..!!")
+                    break
+
+
+
+
+#(all_mids[self.all_keep] * np.r_[self.image_shape[1], self.image_shape[0]]).astype(int)
+
+
+
+pass
+
+
+
 # all_blobs_xy = vh.project_detection_to_xy_plane(all_blobs)
 #
 # import pickle
@@ -281,55 +417,57 @@ from local_modules import video_handler
 #
 # tfd.close()
 
-PATH_TO_PROCESS_DIR = r'/mnt/427149F311EAC541/MEGA/bike_cam/tf_learning_data/'
-#PATH_TO_CKPT = os.path.join(PATH_TO_PROCESS_DIR, 'ssdv1/frozen_inference_graph.pb')
-#PATH_TO_LABELS = r"/mnt/427149F311EAC541/pipeline/label_map.pbtxt"
-
-
-
-#tfd = tf_detector.TFDetector(PATH_TO_CKPT,PATH_TO_LABELS,1)
-vh = video_handler.VideoHandler('tres_ciclistas',folder = r"/home/eg/MEGAsync/bike_cam/data/test/")
-
-import pickle
-from matplotlib import pyplot as plt
-all_blobs = pickle.load(open( "/home/eg/MEGAsync/bike_cam/data/test/blobs.p", "rb" ) )
-#  tfd = tf_detector.TFDetector(PATH_TO_CKPT,PATH_TO_LABELS,1)
-#all_blobs = pickle.load(open( "/mnt/427149F311EAC541/MEGA/bike_cam/data/test/blobs.p", "rb" ) )
-#vh = video_handler.VideoHandler('tres_ciclistas')
-
-ret, whole_frame = vh.get_next()
-tracking_frame = vh.get_current_tracking_zone().copy()
-detection_frame = vh.get_current_detection_zone().copy()
-xy_bird_frame = cv2.warpPerspective(whole_frame, vh.M,(1750,3000))
-
-all_blobs_tracking = vh.mv_detection_to_tracking(all_blobs)
-all_blobs_whole = vh.mv_detection_to_input(all_blobs)
-
-prj_src =  np.array(vh.video_meta['floor_proj_src'], dtype=np.float32)
-prj_dst =  np.array(vh.video_meta['floor_proj_dst'], dtype=np.float32)
-
-P = cv2.getAffineTransform(prj_src, prj_dst)
-all_blobs_whole_prj = cv2.transform(all_blobs_whole.astype(np.float64).reshape(1,-1,2),P)
-all_blobs_whole_prj = np.squeeze(all_blobs_whole_prj)
-
-#all_blobs_xy = vh.project_detection_to_xy_plane(all_blobs)
-all_blobs_xy = cv2.perspectiveTransform(all_blobs_whole_prj.astype(np.float64).reshape(1,-1,2),vh.M)
-all_blobs_xy = np.squeeze(all_blobs_xy)
-
-# we test all visulaizations by moving the blobs to all the sub screens
-for k in range(all_blobs.shape[0]):
-    detection_frame = cv2.circle(detection_frame, tuple(all_blobs[k].astype(int)), 5, (0, 0, 255), -1)
-    tracking_frame = cv2.circle(tracking_frame, tuple(all_blobs_tracking[k].astype(int)), 5, (0, 0, 255), -1)
-    whole_frame = cv2.circle(whole_frame, tuple(all_blobs_whole[k].astype(int)), 5, (0, 0, 255), -1)
-    xy_bird_frame = cv2.circle(xy_bird_frame, tuple(all_blobs_xy[k].astype(int)), 15, (0, 0, 255), -1)
-
-#print(all_blobs_xy)
-
-plt.imshow(xy_bird_frame)
-plt.show()
-
-plt.imshow(whole_frame)
-plt.show()
-
-pass
+# PATH_TO_PROCESS_DIR = r'/mnt/427149F311EAC541/MEGA/bike_cam/tf_learning_data/'
+# #PATH_TO_CKPT = os.path.join(PATH_TO_PROCESS_DIR, 'ssdv1/frozen_inference_graph.pb')
+# #PATH_TO_LABELS = r"/mnt/427149F311EAC541/pipeline/label_map.pbtxt"
+#
+#
+#
+# #tfd = tf_detector.TFDetector(PATH_TO_CKPT,PATH_TO_LABELS,1)
+# #vh = video_handler.VideoHandler('tres_ciclistas',folder = r"/home/eg/MEGAsync/bike_cam/data/test/")
+#
+# import pickle
+# from matplotlib import pyplot as plt
+#
+# def sim_blobs
+# all_blobs = pickle.load(open( "/home/eg/MEGAsync/bike_cam/data/test/blobs.p", "rb" ) )
+# #  tfd = tf_detector.TFDetector(PATH_TO_CKPT,PATH_TO_LABELS,1)
+# #all_blobs = pickle.load(open( "/mnt/427149F311EAC541/MEGA/bike_cam/data/test/blobs.p", "rb" ) )
+# #vh = video_handler.VideoHandler('tres_ciclistas')
+#
+# ret, whole_frame = vh.get_next()
+# tracking_frame = vh.get_current_tracking_zone().copy()
+# detection_frame = vh.get_current_detection_zone().copy()
+# xy_bird_frame = cv2.warpPerspective(whole_frame, vh.M,(1750,3000))
+#
+# all_blobs_tracking = vh.mv_detection_to_tracking(all_blobs)
+# all_blobs_whole = vh.mv_detection_to_input(all_blobs)
+#
+# prj_src =  np.array(vh.video_meta['floor_proj_src'], dtype=np.float32)
+# prj_dst =  np.array(vh.video_meta['floor_proj_dst'], dtype=np.float32)
+#
+# P = cv2.getAffineTransform(prj_src, prj_dst)
+# all_blobs_whole_prj = cv2.transform(all_blobs_whole.astype(np.float64).reshape(1,-1,2),P)
+# all_blobs_whole_prj = np.squeeze(all_blobs_whole_prj)
+#
+# #all_blobs_xy = vh.project_detection_to_xy_plane(all_blobs)
+# all_blobs_xy = cv2.perspectiveTransform(all_blobs_whole_prj.astype(np.float64).reshape(1,-1,2),vh.M)
+# all_blobs_xy = np.squeeze(all_blobs_xy)
+#
+# # we test all visulaizations by moving the blobs to all the sub screens
+# for k in range(all_blobs.shape[0]):
+#     detection_frame = cv2.circle(detection_frame, tuple(all_blobs[k].astype(int)), 5, (0, 0, 255), -1)
+#     tracking_frame = cv2.circle(tracking_frame, tuple(all_blobs_tracking[k].astype(int)), 5, (0, 0, 255), -1)
+#     whole_frame = cv2.circle(whole_frame, tuple(all_blobs_whole[k].astype(int)), 5, (0, 0, 255), -1)
+#     xy_bird_frame = cv2.circle(xy_bird_frame, tuple(all_blobs_xy[k].astype(int)), 15, (0, 0, 255), -1)
+#
+# #print(all_blobs_xy)
+#
+# plt.imshow(xy_bird_frame)
+# plt.show()
+#
+# plt.imshow(whole_frame)
+# plt.show()
+#
+# pass
 
